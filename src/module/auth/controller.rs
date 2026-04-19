@@ -9,16 +9,10 @@ use crate::{
     app::AppState,
     module::auth::{
         error::AuthError,
-        schema::{
-            GoogleSignInRequest, SmartWalletRegistrationRequest, WalletChallengeRequest,
-            WalletConnectRequest,
-        },
+        schema::{GoogleSignInRequest, WalletChallengeRequest, WalletConnectRequest},
     },
     service::{
-        auth::{
-            connect_wallet, create_wallet_challenge, get_me, register_smart_wallet,
-            sign_in_with_google,
-        },
+        auth::{connect_wallet, create_wallet_challenge, get_me, sign_in_with_google},
         jwt::AuthenticatedUser,
     },
 };
@@ -50,14 +44,4 @@ pub async fn me(
     Extension(authenticated_user): Extension<AuthenticatedUser>,
 ) -> Result<impl IntoResponse, AuthError> {
     Ok(Json(get_me(&state, authenticated_user).await?))
-}
-
-pub async fn smart_wallet_register(
-    State(state): State<AppState>,
-    Extension(authenticated_user): Extension<AuthenticatedUser>,
-    Json(payload): Json<SmartWalletRegistrationRequest>,
-) -> Result<impl IntoResponse, AuthError> {
-    Ok(Json(
-        register_smart_wallet(&state, authenticated_user, payload).await?,
-    ))
 }

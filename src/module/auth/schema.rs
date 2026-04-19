@@ -23,14 +23,6 @@ pub struct WalletConnectRequest {
     pub username: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct SmartWalletRegistrationRequest {
-    pub wallet_address: String,
-    pub wallet_standard: Option<String>,
-    pub relayer_url: Option<String>,
-    pub web_auth_domain: Option<String>,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthResponse {
     pub token: String,
@@ -63,19 +55,13 @@ pub struct UserResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WalletResponse {
-    pub wallet_address: Option<String>,
-    pub network: String,
+    pub wallet_address: String,
+    pub chain_id: i64,
     pub account_kind: String,
-    pub wallet_status: String,
-    pub wallet_standard: Option<String>,
+    pub owner_address: Option<String>,
     pub owner_provider: Option<String>,
-    pub sponsor_address: Option<String>,
-    pub relayer_kind: Option<String>,
-    pub relayer_url: Option<String>,
-    pub web_auth_contract_id: Option<String>,
-    pub web_auth_domain: Option<String>,
-    pub deployed_at: Option<DateTime<Utc>>,
-    pub last_authenticated_at: Option<DateTime<Utc>>,
+    pub factory_address: Option<String>,
+    pub entry_point_address: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -102,20 +88,30 @@ impl UserResponse {
 impl From<WalletRecord> for WalletResponse {
     fn from(value: WalletRecord) -> Self {
         Self {
-            wallet_address: value.wallet_address,
-            network: value.network,
-            account_kind: value.account_kind,
-            wallet_status: value.wallet_status,
-            wallet_standard: value.wallet_standard,
+            wallet_address: value.wallet_address.unwrap_or_default(),
+            chain_id: wallet_chain_id(&value.network),
+            account_kind: frontend_account_kind(&value.account_kind),
+            owner_address: value.owner_address,
             owner_provider: value.owner_provider,
-            sponsor_address: value.sponsor_address,
-            relayer_kind: value.relayer_kind,
-            relayer_url: value.relayer_url,
-            web_auth_contract_id: value.web_auth_contract_id,
-            web_auth_domain: value.web_auth_domain,
-            deployed_at: value.deployed_at,
-            last_authenticated_at: value.last_authenticated_at,
+            factory_address: value.factory_contract_id,
+            entry_point_address: None,
             created_at: value.created_at,
         }
+    }
+}
+
+fn wallet_chain_id(network: &str) -> i64 {
+    match network {
+        "testnet" => 10143,
+        "mainnet" => 1,
+        _ => 10143,
+    }
+}
+
+fn frontend_account_kind(account_kind: &str) -> String {
+    match account_kind {
+        "stellar_smart_wallet" => "smart_account".to_owned(),
+        "classic_account" => "external_eoa".to_owned(),
+        other => other.to_owned(),
     }
 }

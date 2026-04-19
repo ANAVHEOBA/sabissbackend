@@ -3,11 +3,15 @@ use aes_gcm::{
     aead::{Aead, KeyInit, OsRng, rand_core::RngCore},
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ethers_signers::{LocalWallet, Signer};
-use rand::thread_rng;
+use data_encoding::BASE32_NOPAD;
+use ed25519_dalek::SigningKey;
+use rand::rngs::OsRng as DalekOsRng;
 use thiserror::Error;
 
 use crate::config::environment::Environment;
+
+const STELLAR_ACCOUNT_ID_VERSION_BYTE: u8 = 6 << 3;
+const STELLAR_SECRET_SEED_VERSION_BYTE: u8 = 18 << 3;
 
 #[derive(Debug, Error)]
 pub enum WalletCryptoError {
@@ -22,6 +26,7 @@ pub enum WalletCryptoError {
 #[derive(Debug, Clone)]
 pub struct ManagedOwnerKeyMaterial {
     pub owner_address: String,
+    pub owner_public_key_hex: String,
     pub encrypted_private_key: String,
     pub encryption_nonce: String,
     pub key_version: i32,
@@ -30,12 +35,17 @@ pub struct ManagedOwnerKeyMaterial {
 pub fn create_managed_owner_key(
     env: &Environment,
 ) -> Result<ManagedOwnerKeyMaterial, WalletCryptoError> {
-    let wallet = LocalWallet::new(&mut thread_rng());
-    let secret_key = wallet.signer().to_bytes();
+    let mut rng = DalekOsRng;
+    let mut secret_key = [0_u8; 32];
+    rng.fill_bytes(&mut secret_key);
+    let signing_key = SigningKey::from_bytes(&secret_key);
+    let secret_key = signing_key.to_bytes();
+    let public_key = signing_key.verifying_key().to_bytes();
     let encrypted = encrypt_private_key(env, secret_key.as_slice())?;
 
     Ok(ManagedOwnerKeyMaterial {
-        owner_address: format!("{:#x}", wallet.address()),
+        owner_address: encode_stellar_public_key(&public_key),
+        owner_public_key_hex: hex::encode(public_key),
         encrypted_private_key: encrypted.ciphertext,
         encryption_nonce: encrypted.nonce,
         key_version: env.aa_owner_encryption_key_version,
@@ -58,6 +68,20 @@ pub fn decrypt_private_key(
     cipher
         .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
         .map_err(|_| WalletCryptoError::DecryptFailed)
+}
+
+pub fn encode_stellar_secret_key(private_key: &[u8; 32]) -> String {
+    let mut payload = [0_u8; 33];
+    payload[0] = STELLAR_SECRET_SEED_VERSION_BYTE;
+    payload[1..].copy_from_slice(private_key);
+
+    let checksum = crc16_xmodem(&payload).to_le_bytes();
+    let mut encoded = [0_u8; 35];
+    encoded[..33].copy_from_slice(&payload);
+    encoded[33] = checksum[0];
+    encoded[34] = checksum[1];
+
+    BASE32_NOPAD.encode(&encoded)
 }
 
 struct EncryptedWalletKey {
@@ -91,4 +115,36 @@ fn build_cipher(env: &Environment) -> Result<Aes256Gcm, WalletCryptoError> {
     }
 
     Aes256Gcm::new_from_slice(&key_bytes).map_err(|_| WalletCryptoError::InvalidEncryptionKey)
+}
+
+fn encode_stellar_public_key(public_key: &[u8; 32]) -> String {
+    let mut payload = [0_u8; 33];
+    payload[0] = STELLAR_ACCOUNT_ID_VERSION_BYTE;
+    payload[1..].copy_from_slice(public_key);
+
+    let checksum = crc16_xmodem(&payload).to_le_bytes();
+    let mut encoded = [0_u8; 35];
+    encoded[..33].copy_from_slice(&payload);
+    encoded[33] = checksum[0];
+    encoded[34] = checksum[1];
+
+    BASE32_NOPAD.encode(&encoded)
+}
+
+fn crc16_xmodem(data: &[u8]) -> u16 {
+    let mut crc = 0u16;
+
+    for byte in data {
+        crc ^= u16::from(*byte) << 8;
+
+        for _ in 0..8 {
+            crc = if (crc & 0x8000) != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+
+    crc
 }

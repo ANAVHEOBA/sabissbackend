@@ -6,15 +6,12 @@ use axum::{
 use crate::{
     app::AppState,
     middleware::user::require_auth,
-    module::auth::controller::{
-        google_sign_in, me, smart_wallet_register, wallet_challenge, wallet_connect,
-    },
+    module::auth::controller::{google_sign_in, me, wallet_challenge, wallet_connect},
 };
 
 pub fn router(state: AppState) -> Router<AppState> {
     let protected_routes = Router::new()
         .route("/me", get(me))
-        .route("/smart-wallet/register", post(smart_wallet_register))
         .route_layer(axum_middleware::from_fn_with_state(state, require_auth));
 
     Router::new()

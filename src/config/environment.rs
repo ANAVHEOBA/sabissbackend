@@ -17,12 +17,18 @@ pub struct Environment {
     pub db_acquire_timeout_ms: u64,
     pub redis_url: Option<String>,
     pub rpc_url: String,
+    pub rpc_fallback_urls: Vec<String>,
+    pub horizon_url: String,
+    pub horizon_fallback_urls: Vec<String>,
     pub cors_allowed_origins: Vec<String>,
     pub google_client_id: Option<String>,
     pub google_jwks_url: String,
+    pub aa_owner_encryption_key: String,
+    pub aa_owner_encryption_key_version: i32,
     pub stellar_aa_relayer_kind: String,
     pub stellar_aa_relayer_url: Option<String>,
     pub stellar_aa_sponsor_address: String,
+    pub sabi_wallet_factory_id: Option<String>,
     pub sep45_web_auth_contract_id: Option<String>,
     pub sep45_web_auth_domain: Option<String>,
     pub jwt_secret: String,
@@ -36,10 +42,11 @@ pub struct Environment {
     pub operator: String,
     pub fee_recipient: String,
     pub mock_usdc_id: String,
-    pub sabi_wallet_id: Option<String>,
     pub sabi_ctf_id: String,
     pub sabi_market_id: String,
     pub sabi_exchange_id: String,
+    pub sabi_liquidity_manager_id: String,
+    pub sabi_neg_risk_id: String,
 }
 
 impl Environment {
@@ -56,12 +63,23 @@ impl Environment {
             db_acquire_timeout_ms: parse_env("DB_ACQUIRE_TIMEOUT_MS", 10_000)?,
             redis_url: optional_env("REDIS_URL"),
             rpc_url: required_env("RPC_URL")?,
+            rpc_fallback_urls: parse_list_env("RPC_FALLBACK_URLS"),
+            horizon_url: parse_env(
+                "HORIZON_URL",
+                "https://horizon-testnet.stellar.org".to_owned(),
+            )?,
+            horizon_fallback_urls: parse_list_env("HORIZON_FALLBACK_URLS"),
             cors_allowed_origins: parse_cors_allowed_origins()?,
             google_client_id: optional_env("GOOGLE_CLIENT_ID"),
             google_jwks_url: parse_env(
                 "GOOGLE_JWKS_URL",
                 "https://www.googleapis.com/oauth2/v3/certs".to_owned(),
             )?,
+            aa_owner_encryption_key: parse_env(
+                "AA_OWNER_ENCRYPTION_KEY",
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_owned(),
+            )?,
+            aa_owner_encryption_key_version: parse_env("AA_OWNER_ENCRYPTION_KEY_VERSION", 1)?,
             stellar_aa_relayer_kind: parse_env("STELLAR_AA_RELAYER_KIND", "server".to_owned())?,
             stellar_aa_relayer_url: optional_env("STELLAR_AA_RELAYER_URL"),
             stellar_aa_sponsor_address: normalize_wallet_address(
@@ -69,6 +87,7 @@ impl Environment {
                     .or_else(|_| required_env("OPERATOR"))
                     .or_else(|_| required_env("ADMIN"))?,
             )?,
+            sabi_wallet_factory_id: optional_env("SABI_WALLET_FACTORY_ID"),
             sep45_web_auth_contract_id: Some(parse_env(
                 "SEP45_WEB_AUTH_CONTRACT_ID",
                 "CD3LA6RKF5D2FN2R2L57MWXLBRSEWWENE74YBEFZSSGNJRJGICFGQXMX".to_owned(),
@@ -88,10 +107,11 @@ impl Environment {
             operator: normalize_wallet_address(&required_env("OPERATOR")?)?,
             fee_recipient: normalize_wallet_address(&required_env("FEE_RECIPIENT")?)?,
             mock_usdc_id: required_env("MOCK_USDC_ID")?,
-            sabi_wallet_id: optional_env("SABI_WALLET_ID"),
             sabi_ctf_id: required_env("SABI_CTF_ID")?,
             sabi_market_id: required_env("SABI_MARKET_ID")?,
             sabi_exchange_id: required_env("SABI_EXCHANGE_ID")?,
+            sabi_liquidity_manager_id: required_env("SABI_LIQUIDITY_MANAGER_ID")?,
+            sabi_neg_risk_id: required_env("SABI_NEG_RISK_ID")?,
         })
         .map(|mut env| {
             env.admin_wallet_addresses = if configured_admins.is_empty() {
@@ -112,6 +132,28 @@ impl Environment {
             .iter()
             .any(|value| value == wallet_address)
     }
+
+    pub fn rpc_candidates(&self) -> Vec<&str> {
+        let mut candidates = Vec::with_capacity(1 + self.rpc_fallback_urls.len());
+        candidates.push(self.rpc_url.as_str());
+        for url in &self.rpc_fallback_urls {
+            if url != &self.rpc_url {
+                candidates.push(url.as_str());
+            }
+        }
+        candidates
+    }
+
+    pub fn horizon_candidates(&self) -> Vec<&str> {
+        let mut candidates = Vec::with_capacity(1 + self.horizon_fallback_urls.len());
+        candidates.push(self.horizon_url.as_str());
+        for url in &self.horizon_fallback_urls {
+            if url != &self.horizon_url {
+                candidates.push(url.as_str());
+            }
+        }
+        candidates
+    }
 }
 
 fn required_env(key: &str) -> Result<String> {
@@ -123,6 +165,12 @@ fn optional_env(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+fn parse_list_env(key: &str) -> Vec<String> {
+    optional_env(key)
+        .map(|value| split_csv_values(&value))
+        .unwrap_or_default()
 }
 
 fn parse_cors_allowed_origins() -> Result<Vec<String>> {

@@ -74,19 +74,114 @@ mod sql {
             w.account_kind AS wallet_account_kind,
             w.wallet_status,
             w.wallet_standard,
+            w.owner_address AS wallet_owner_address,
             w.owner_provider AS wallet_owner_provider,
             w.owner_ref AS wallet_owner_ref,
             w.sponsor_address AS wallet_sponsor_address,
             w.relayer_kind AS wallet_relayer_kind,
             w.relayer_url AS wallet_relayer_url,
+            w.factory_contract_id AS wallet_factory_contract_id,
             w.web_auth_contract_id AS wallet_web_auth_contract_id,
             w.web_auth_domain AS wallet_web_auth_domain,
+            w.owner_encrypted_private_key AS wallet_owner_encrypted_private_key,
+            w.owner_encryption_nonce AS wallet_owner_encryption_nonce,
+            w.owner_key_version AS wallet_owner_key_version,
             w.deployed_at AS wallet_deployed_at,
             w.last_authenticated_at AS wallet_last_authenticated_at,
             w.created_at AS wallet_created_at
         FROM users u
         LEFT JOIN wallet_accounts w ON w.user_id = u.id
         WHERE u.id = $1
+    "#;
+    pub const UPSERT_GOOGLE_MANAGED_SMART_WALLET: &str = r#"
+        INSERT INTO wallet_accounts (
+            id,
+            user_id,
+            wallet_address,
+            network,
+            account_kind,
+            wallet_status,
+            wallet_standard,
+            owner_address,
+            owner_provider,
+            owner_ref,
+            sponsor_address,
+            relayer_kind,
+            relayer_url,
+            factory_contract_id,
+            web_auth_contract_id,
+            web_auth_domain,
+            owner_encrypted_private_key,
+            owner_encryption_nonce,
+            owner_key_version,
+            deployed_at,
+            last_authenticated_at
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            $8,
+            $9,
+            $10,
+            $11,
+            $12,
+            $13,
+            $14,
+            $15,
+            $16,
+            $17,
+            $18,
+            $19,
+            NOW(),
+            NOW()
+        )
+        ON CONFLICT (user_id) DO UPDATE
+        SET
+            wallet_address = EXCLUDED.wallet_address,
+            network = EXCLUDED.network,
+            account_kind = EXCLUDED.account_kind,
+            wallet_status = EXCLUDED.wallet_status,
+            wallet_standard = EXCLUDED.wallet_standard,
+            owner_address = EXCLUDED.owner_address,
+            owner_provider = EXCLUDED.owner_provider,
+            owner_ref = EXCLUDED.owner_ref,
+            sponsor_address = EXCLUDED.sponsor_address,
+            relayer_kind = EXCLUDED.relayer_kind,
+            relayer_url = EXCLUDED.relayer_url,
+            factory_contract_id = EXCLUDED.factory_contract_id,
+            web_auth_contract_id = COALESCE(EXCLUDED.web_auth_contract_id, wallet_accounts.web_auth_contract_id),
+            web_auth_domain = COALESCE(EXCLUDED.web_auth_domain, wallet_accounts.web_auth_domain),
+            owner_encrypted_private_key = EXCLUDED.owner_encrypted_private_key,
+            owner_encryption_nonce = EXCLUDED.owner_encryption_nonce,
+            owner_key_version = EXCLUDED.owner_key_version,
+            deployed_at = COALESCE(wallet_accounts.deployed_at, NOW()),
+            last_authenticated_at = NOW()
+        RETURNING
+            wallet_address,
+            network,
+            account_kind,
+            wallet_status,
+            wallet_standard,
+            owner_address,
+            owner_provider,
+            owner_ref,
+            sponsor_address,
+            relayer_kind,
+            relayer_url,
+            factory_contract_id,
+            web_auth_contract_id,
+            web_auth_domain,
+            owner_encrypted_private_key,
+            owner_encryption_nonce,
+            owner_key_version,
+            deployed_at,
+            last_authenticated_at,
+            created_at
     "#;
     pub const UPSERT_GOOGLE_SMART_WALLET: &str = r#"
         INSERT INTO wallet_accounts (
@@ -150,42 +245,18 @@ mod sql {
             account_kind,
             wallet_status,
             wallet_standard,
+            owner_address,
             owner_provider,
             owner_ref,
             sponsor_address,
             relayer_kind,
             relayer_url,
+            factory_contract_id,
             web_auth_contract_id,
             web_auth_domain,
-            deployed_at,
-            last_authenticated_at,
-            created_at
-    "#;
-    pub const REGISTER_SMART_WALLET: &str = r#"
-        UPDATE wallet_accounts
-        SET
-            wallet_address = $2,
-            wallet_standard = COALESCE($3, wallet_standard),
-            relayer_url = COALESCE($4, relayer_url),
-            web_auth_domain = COALESCE($5, web_auth_domain),
-            wallet_status = $6,
-            deployed_at = COALESCE(deployed_at, NOW()),
-            last_authenticated_at = NOW()
-        WHERE user_id = $1
-          AND account_kind = $7
-        RETURNING
-            wallet_address,
-            network,
-            account_kind,
-            wallet_status,
-            wallet_standard,
-            owner_provider,
-            owner_ref,
-            sponsor_address,
-            relayer_kind,
-            relayer_url,
-            web_auth_contract_id,
-            web_auth_domain,
+            owner_encrypted_private_key,
+            owner_encryption_nonce,
+            owner_key_version,
             deployed_at,
             last_authenticated_at,
             created_at
@@ -288,25 +359,45 @@ pub async fn ensure_google_smart_wallet(
         .map_err(AuthError::from)
 }
 
-pub async fn register_smart_wallet(
+pub struct ManagedGoogleWalletUpsert<'a> {
+    pub wallet_address: &'a str,
+    pub owner_address: &'a str,
+    pub owner_ref: &'a str,
+    pub owner_encrypted_private_key: &'a str,
+    pub owner_encryption_nonce: &'a str,
+    pub owner_key_version: i32,
+}
+
+pub async fn upsert_google_managed_wallet(
     pool: &DbPool,
+    env: &Environment,
     user_id: Uuid,
-    wallet_address: &str,
-    wallet_standard: Option<&str>,
-    relayer_url: Option<&str>,
-    web_auth_domain: Option<&str>,
+    google_sub: &str,
+    wallet: &ManagedGoogleWalletUpsert<'_>,
 ) -> Result<WalletRecord, AuthError> {
-    sqlx::query_as::<_, WalletRecord>(sql::REGISTER_SMART_WALLET)
+    sqlx::query_as::<_, WalletRecord>(sql::UPSERT_GOOGLE_MANAGED_SMART_WALLET)
+        .bind(Uuid::new_v4())
         .bind(user_id)
-        .bind(wallet_address)
-        .bind(wallet_standard)
-        .bind(relayer_url)
-        .bind(web_auth_domain)
-        .bind(WALLET_STATUS_ACTIVE)
+        .bind(wallet.wallet_address)
+        .bind(&env.network)
         .bind(ACCOUNT_KIND_STELLAR_SMART_WALLET)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AuthError::forbidden("smart-wallet profile not found for user"))
+        .bind(WALLET_STATUS_ACTIVE)
+        .bind("sabi_wallet")
+        .bind(wallet.owner_address)
+        .bind("google_oidc")
+        .bind(google_sub)
+        .bind(&env.stellar_aa_sponsor_address)
+        .bind(&env.stellar_aa_relayer_kind)
+        .bind(env.stellar_aa_relayer_url.as_deref())
+        .bind(env.sabi_wallet_factory_id.as_deref())
+        .bind(env.sep45_web_auth_contract_id.as_deref())
+        .bind(env.sep45_web_auth_domain.as_deref())
+        .bind(wallet.owner_encrypted_private_key)
+        .bind(wallet.owner_encryption_nonce)
+        .bind(wallet.owner_key_version)
+        .fetch_one(pool)
+        .await
+        .map_err(AuthError::from)
 }
 
 pub async fn get_user_profile_by_id(

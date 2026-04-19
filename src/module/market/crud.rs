@@ -299,7 +299,8 @@ mod sql {
         FROM markets m
         INNER JOIN market_events e ON e.id = m.event_db_id
         WHERE
-            m.condition_id = $1
+            REPLACE(TRIM(BOTH '"' FROM LOWER(m.condition_id)), '0x', '') =
+                REPLACE(TRIM(BOTH '"' FROM LOWER($1)), '0x', '')
             AND m.publication_status = 'published'
             AND e.publication_status = 'published'
             AND e.visible = TRUE

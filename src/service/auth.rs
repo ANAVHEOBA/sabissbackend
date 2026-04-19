@@ -15,7 +15,7 @@ use crate::{
         model::{UserRecord, VerifiedGoogleToken, WalletChallengeRecord},
         schema::{
             AuthResponse, GoogleSignInRequest, MeResponse, UserResponse, WalletChallengeRequest,
-            SmartWalletRegistrationRequest, WalletChallengeResponse, WalletConnectRequest,
+            WalletChallengeResponse, WalletConnectRequest,
         },
     },
     service::{
@@ -116,32 +116,6 @@ pub async fn get_me(
     })
 }
 
-pub async fn register_smart_wallet(
-    state: &AppState,
-    authenticated_user: AuthenticatedUser,
-    payload: SmartWalletRegistrationRequest,
-) -> Result<AuthResponse, AuthError> {
-    let wallet_address = normalize_contract_wallet_address(&payload.wallet_address)?;
-
-    crud::register_smart_wallet(
-        &state.db,
-        authenticated_user.user_id,
-        &wallet_address,
-        payload.wallet_standard.as_deref(),
-        payload.relayer_url.as_deref(),
-        payload.web_auth_domain.as_deref(),
-    )
-    .await?;
-
-    let user = crud::get_user_profile_by_id(&state.db, authenticated_user.user_id)
-        .await?
-        .ok_or_else(|| AuthError::unauthorized("invalid session"))?
-        .into_parts()
-        .0;
-
-    build_auth_response(state, user).await
-}
-
 pub fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     let cookies = headers.get(header::COOKIE)?.to_str().ok()?;
 
@@ -159,24 +133,6 @@ pub fn normalize_wallet_address(raw: &str) -> Result<String, AuthError> {
     let normalized = raw.trim().to_ascii_uppercase();
     decode_stellar_public_key(&normalized)
         .map_err(|_| AuthError::bad_request("invalid stellar wallet address"))?;
-    Ok(normalized)
-}
-
-pub fn normalize_contract_wallet_address(raw: &str) -> Result<String, AuthError> {
-    let normalized = raw.trim().to_ascii_uppercase();
-    if normalized.len() != 56 {
-        return Err(AuthError::bad_request("invalid stellar smart-wallet address"));
-    }
-    if !normalized.starts_with('C') {
-        return Err(AuthError::bad_request("smart-wallet address must start with C"));
-    }
-    if !normalized
-        .chars()
-        .all(|value| matches!(value, 'A'..='Z' | '2'..='7'))
-    {
-        return Err(AuthError::bad_request("invalid stellar smart-wallet address"));
-    }
-
     Ok(normalized)
 }
 
